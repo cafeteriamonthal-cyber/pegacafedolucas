@@ -2,12 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Pega Café do Lucas ☕</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@700;800&display=swap');
 
   * { margin:0; padding:0; box-sizing:border-box; }
+
+  html, body {
+    width: 100%;
+    min-height: 100%;
+    overscroll-behavior: none;
+  }
 
   body {
     background: #1a1a2e;
@@ -16,16 +22,33 @@
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow: hidden;
+    touch-action: none;
   }
 
+  /* Área visível responsiva. O jogo interno continua em 480x640 e é escalado via JS. */
   #game-container {
     position: relative;
-    width: 480px;
-    height: 640px;
+    width: min(100vw, 480px);
+    height: min(100dvh, 640px);
+    aspect-ratio: 3 / 4;
     overflow: hidden;
     border-radius: 4px;
     box-shadow: 0 0 0 4px #5d4037, 0 0 0 8px #3e2723, 0 12px 40px rgba(0,0,0,0.7);
+    image-rendering: pixelated;
+    background: #1a1a2e;
+  }
+
+  /* Mundo lógico do jogo: não mexa nas medidas. O JavaScript adapta para a tela. */
+  #game-world {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 480px;
+    height: 640px;
+    transform-origin: top left;
+    overflow: hidden;
     image-rendering: pixelated;
   }
 
@@ -209,13 +232,56 @@
   }
 
   @media (max-width: 520px) {
-    #game-container { width:100vw; height:100dvh; border-radius:0; }
-    #touch-controls { display:flex; }
+    #game-container {
+      width: 100vw;
+      height: 100dvh;
+      max-width: none;
+      max-height: none;
+      border-radius: 0;
+      box-shadow: none;
+    }
+    #hud {
+      padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
+    }
+    .hud-item { font-size: 0.48rem; }
+    .hud-label { font-size: 0.38rem; }
+    .screen {
+      padding: calc(22px + env(safe-area-inset-top, 0px)) 16px calc(22px + env(safe-area-inset-bottom, 0px));
+      gap: 12px;
+    }
+    .screen h1 {
+      font-size: 0.88rem;
+      line-height: 1.75;
+    }
+    .screen p {
+      font-size: 0.9rem;
+      max-width: 320px;
+    }
+    .legend {
+      gap: 8px;
+      padding: 8px 10px;
+    }
+    .legend-item {
+      font-size: 0.78rem;
+    }
+    #touch-controls {
+      display: flex;
+      bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+      padding: 0 18px;
+    }
+    .touch-btn {
+      width: 82px;
+      height: 72px;
+      font-size: 2rem;
+      background: rgba(0,0,0,0.30);
+      border-color: rgba(255,255,255,0.45);
+    }
   }
 </style>
 </head>
 <body>
 <div id="game-container">
+  <div id="game-world">
   <div id="bg-layer"></div>
 
   <div id="hud">
@@ -257,6 +323,7 @@
     <p id="final-score-msg" style="font-size:1rem;font-family:'Press Start 2P',monospace;color:#FFE082;line-height:2;"></p>
     <p id="final-level-msg" style="color:#a5d6a7;font-family:'Nunito',sans-serif;"></p>
     <button class="btn" id="restart-btn">↺ DE NOVO!</button>
+  </div>
   </div>
 </div>
 
@@ -302,12 +369,16 @@ let cachedMnh  = null;
 
 // ─── GAME STATE ────────────────────────────────────────────────────────────
 const GAME_W = 480;
+const GAME_H = 640;
+const PLAYER_W = 130;
+const PLAYER_H = 162;
 const FALL_LEFT = 30, FALL_W = 420;
+let gameScale = 1;
 
 let score=0, lives=3, level=1;
 let gameRunning=false, animId=null, lastTime=0, spawnTimer=0;
 let fallingItems=[];
-let playerX = GAME_W/2 - 65;
+let playerX = GAME_W/2 - PLAYER_W/2;
 let keys = {left:false, right:false};
 
 function getLevelConfig(lv) {
@@ -325,9 +396,27 @@ const levelEl  = document.getElementById('level-display');
 const livesEl  = document.getElementById('lives-display');
 const startScr = document.getElementById('start-screen');
 const overScr  = document.getElementById('gameover-screen');
-const container= document.getElementById('game-container');
+const viewport = document.getElementById('game-container');
+const container = document.getElementById('game-world');
 const banner   = document.getElementById('level-banner');
 const bannerLv = document.getElementById('banner-level');
+
+function fitGameToScreen() {
+  const vw = viewport.clientWidth || GAME_W;
+  const vh = viewport.clientHeight || GAME_H;
+  gameScale = Math.min(vw / GAME_W, vh / GAME_H);
+  const offsetX = Math.max(0, (vw - GAME_W * gameScale) / 2);
+  const offsetY = Math.max(0, (vh - GAME_H * gameScale) / 2);
+  container.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${gameScale})`;
+}
+
+function screenDeltaToGame(delta) {
+  return delta / (gameScale || 1);
+}
+
+window.addEventListener('resize', fitGameToScreen);
+window.addEventListener('orientationchange', () => setTimeout(fitGameToScreen, 150));
+fitGameToScreen();
 
 // ─── INPUT ─────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
@@ -344,18 +433,28 @@ document.getElementById('btn-right').addEventListener('touchstart', e=>{e.preven
 document.getElementById('btn-right').addEventListener('touchend',   e=>{e.preventDefault();keys.right=false;},{passive:false});
 
 let dragging=false, dragStartX=0, dragPX=0;
-container.addEventListener('mousedown', e=>{ dragging=true; dragStartX=e.clientX; dragPX=playerX; });
-document.addEventListener('mouseup',   ()=>dragging=false);
+viewport.addEventListener('mousedown', e=>{
+  if(!gameRunning) return;
+  dragging=true;
+  dragStartX=e.clientX;
+  dragPX=playerX;
+});
+document.addEventListener('mouseup', ()=>dragging=false);
 document.addEventListener('mousemove', e=>{
   if(!dragging||!gameRunning) return;
-  playerX=Math.max(0,Math.min(GAME_W-130, dragPX+(e.clientX-dragStartX)));
+  playerX=Math.max(0,Math.min(GAME_W-PLAYER_W, dragPX+screenDeltaToGame(e.clientX-dragStartX)));
 });
 let tX=0, tPX=0;
-container.addEventListener('touchstart', e=>{tX=e.touches[0].clientX; tPX=playerX;},{passive:true});
-container.addEventListener('touchmove',  e=>{
-  if(!gameRunning) return;
-  playerX=Math.max(0,Math.min(GAME_W-130, tPX+(e.touches[0].clientX-tX)));
+viewport.addEventListener('touchstart', e=>{
+  if(!gameRunning || !e.touches.length) return;
+  tX=e.touches[0].clientX;
+  tPX=playerX;
 },{passive:true});
+viewport.addEventListener('touchmove', e=>{
+  if(!gameRunning || !e.touches.length) return;
+  e.preventDefault();
+  playerX=Math.max(0,Math.min(GAME_W-PLAYER_W, tPX+screenDeltaToGame(e.touches[0].clientX-tX)));
+},{passive:false});
 
 // ─── HUD ───────────────────────────────────────────────────────────────────
 function updateHUD() {
@@ -407,7 +506,7 @@ function gameLoop(timestamp) {
   const cfg = getLevelConfig(level);
 
   if (keys.left)  playerX=Math.max(0,        playerX-cfg.playerSpeed);
-  if (keys.right) playerX=Math.min(GAME_W-130,playerX+cfg.playerSpeed);
+  if (keys.right) playerX=Math.min(GAME_W-PLAYER_W,playerX+cfg.playerSpeed);
   playerCanvas.style.left = playerX+'px';
 
   spawnTimer+=dt;
@@ -420,7 +519,7 @@ function gameLoop(timestamp) {
 
   // Basket zone: horizontally span sprite, vertically top portion of basket
   const BL = playerX+10, BR = playerX+120;
-  const BY = 640-52-162+80; // basket top for larger sprite
+  const BY = GAME_H-52-PLAYER_H+80; // basket top for larger sprite
 
   for (let i=fallingItems.length-1;i>=0;i--) {
     const item=fallingItems[i];
@@ -435,11 +534,11 @@ function gameLoop(timestamp) {
       item.el.remove(); fallingItems.splice(i,1);
       updateHUD(); continue;
     }
-    if (item.y>600) {
+    if (item.y>GAME_H-40) {
       if (item.type==='coffee') {
         lives--;
         updateHUD();
-        showPopup('💔', item.x, 545, true);
+        showPopup('💔', item.x, GAME_H-95, true);
         if (lives<=0) { item.el.remove(); fallingItems.splice(i,1); endGame(); return; }
       }
       item.el.remove(); fallingItems.splice(i,1);
@@ -477,12 +576,13 @@ function showLevelBanner(lv) {
 
 function startGame() {
   score=0; lives=3; level=1;
-  playerX=GAME_W/2-65;
+  playerX=GAME_W/2-PLAYER_W/2;
   fallingItems.forEach(i=>i.el.remove());
   fallingItems=[]; spawnTimer=0; gameRunning=true; lastTime=0;
   startScr.style.display='none';
   overScr.style.display='none';
   updateHUD();
+  fitGameToScreen();
   if (animId) cancelAnimationFrame(animId);
   animId=requestAnimationFrame(gameLoop);
 }
